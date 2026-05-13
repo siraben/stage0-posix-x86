@@ -107,6 +107,7 @@ DEFINE mov_[eax+BYTE],ebx 8958
 DEFINE mov_[eax+BYTE],ecx 8948
 DEFINE mov_[eax+BYTE],edx 8950
 DEFINE mov_[ebp+BYTE],eax 8945
+DEFINE mov_[ebp+BYTE],ebp 896D
 DEFINE mov_[ebp+BYTE],edx 8955
 DEFINE mov_[ebp+BYTE],esi 8975
 DEFINE mov_[ebx],eax 8903
@@ -116,6 +117,7 @@ DEFINE mov_[edx+BYTE],eax 8942
 DEFINE mov_[edx+BYTE],ebp 896A
 DEFINE mov_[edx+BYTE],ebx 895A
 DEFINE mov_[edx+BYTE],ecx 894A
+DEFINE mov_[edx+BYTE],edx 8952
 DEFINE mov_[edx+BYTE],esi 8972
 DEFINE movzx_eax,al 0FB6C0
 DEFINE movzx_ebx,bl 0FB6DB
@@ -349,11 +351,15 @@ DEFINE xchg_eax,ebx 93
 	mov_[DWORD],eax &C                          # Set C
 :get_token_comment_block_outer
 	mov_eax,[DWORD] &C                          # Using C
+	cmp_eax, !-4                                # Check for EOF
+	je %reset                                   # be done
 	cmp_eax, !47                                # IF '/' != C
 	je %get_token_comment_block_done            # be done
 
 :get_token_comment_block_inner
 	mov_eax,[DWORD] &C                          # Using C
+	cmp_eax, !-4                                # Check for EOF
+	je %reset                                   # be done
 	cmp_eax, !42                                # IF '*' != C
 	je %get_token_comment_block_iter            # jump over
 
@@ -484,8 +490,11 @@ DEFINE xchg_eax,ebx 93
 # returns line feed
 :purge_macro
 	call %fgetc                                 # read next char
+	cmp_eax, !-4                                # Check for EOF
+	je %purge_macro_done                        # Done if EOF
 	cmp_eax, !10                                # Check for '\n'
 	jne %purge_macro                            # Keep going
+:purge_macro_done
 	ret
 
 
@@ -575,6 +584,8 @@ DEFINE xchg_eax,ebx 93
 
 :consume_word_iter
 	call %consume_byte                          # read next char
+	cmp_eax, !-4                                # Check for EOF
+	je %consume_word_done                       # Stop if the string was not closed
 
 	cmp_ecx, !0                                 # IF ESCAPE
 	jne %consume_word_loop                      # keep looping
@@ -583,6 +594,7 @@ DEFINE xchg_eax,ebx 93
 	jne %consume_word_loop                      # keep going
 
 	call %fgetc                                 # return next char
+:consume_word_done
 	pop_ecx                                     # Restore ECX
 	pop_ebx                                     # Restore EBX
 	ret
@@ -792,6 +804,8 @@ Expected ;
 
 :enumerator
 	mov_eax,[DWORD] &global_token         # Using global token
+	cmp_eax, !0                           # Check for EOF
+	je %Exit_Failure                      # Missing enumerator
 	mov_eax,[eax+BYTE] !8                 # global_token->S
 	mov_ebx, %0                           # NULL
 	mov_ecx,[DWORD] &global_constant_list # global_constant_list
@@ -801,18 +815,24 @@ Expected ;
 	mov_eax,[DWORD] &global_token         # Using global_token
 	mov_eax,[eax]                         # global_token->next
 	mov_[DWORD],eax &global_token         # global_token = global_token->next
+	cmp_eax, !0                           # Check for EOF
+	je %enum_end                          # Missing } will be reported below
 
 	mov_eax, &enum_error_equal            # Using "ERROR in enum\nExpected =\n"
 	mov_ebx, &equal                       # Using "="
 	call %require_match                   # Require match and skip
 
 	mov_ebx,[DWORD] &global_token         # Using global_token
+	cmp_ebx, !0                           # Check for EOF
+	je %Exit_Failure                      # Missing enumerator value
 	mov_eax,[DWORD] &global_constant_list # Use global_constant_list
 	mov_[eax+BYTE],ebx !16                # global_constant_list->arguments = global_token->next
 
 	mov_eax,[DWORD] &global_token         # Using global_token
 	mov_eax,[eax]                         # global_token->next
 	mov_[DWORD],eax &global_token         # global_token = global_token->next
+	cmp_eax, !0                           # Check for EOF
+	je %enum_end                          # Missing } will be reported below
 
 	mov_ebx,[DWORD] &global_token         # Use global_token
 	mov_ebx,[eax+BYTE] !8                 # global_token->s
@@ -848,6 +868,9 @@ Expected ;
 	call %type_name                             # Figure out the type_size
 	cmp_eax, !0                                 # IF NULL == type_size
 	je %new_type                                # it was a new type
+	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %program_error                           # Missing declarator
 
 	# Add to global symbol table
 	mov_ebx,eax                                 # put type_size in the right spot
@@ -859,6 +882,8 @@ Expected ;
 	mov_ebx,[DWORD] &global_token               # Using global token
 	mov_ebx,[ebx]                               # global_token->next
 	mov_[DWORD],ebx &global_token               # global_token = global_token->next
+	cmp_ebx, !0                                 # Check for EOF
+	je %program_error                           # Missing ; or function body
 
 	mov_ebx,[DWORD] &global_token               # Using global token
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
@@ -902,7 +927,7 @@ Expected ;
 
 :program_error
 	# Deal with the case of something we don't support
-	# NOT IMPLEMENTED
+	jmp %Exit_Failure                           # Abort
 
 :program_done
 	pop_ecx                                     # Restore ECX
@@ -926,6 +951,8 @@ NULL
 	mov_[DWORD],eax &current_count              # current_count = 0
 
 	mov_eax,[DWORD] &global_token               # Using global token
+	cmp_eax, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing prototype ; or body
 	mov_eax,[eax+BYTE] !4                       # global token->prev
 	mov_eax,[eax+BYTE] !8                       # global token->prev->s
 	mov_ebx, %0                                 # NULL
@@ -1008,6 +1035,8 @@ NULL
 	mov_[DWORD],eax &global_token               # global_token = global_token->next
 :collect_arguments_loop
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing )
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &close_paren                       # ")"
 	call %match                                 # IF global_token->S == ")"
@@ -1017,6 +1046,9 @@ NULL
 	# deal with the case of there are arguments
 	call %type_name                             # Get the type
 	mov_ecx,eax                                 # put type_size safely out of the way
+	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing argument or )
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
@@ -1070,6 +1102,8 @@ NULL
 
 :collect_arguments_common
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing )
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &comma                             # ","
 	call %match                                 # IF global_token->S == ","
@@ -1080,6 +1114,8 @@ NULL
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->next
 	mov_[DWORD],eax &global_token               # global_token = global_token->next
+	cmp_eax, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing argument after comma
 	jmp %collect_arguments_loop                 # keep going
 
 :collect_arguments_done
@@ -1100,6 +1136,8 @@ NULL
 	push_ecx                                    # Protect ECX
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing statement
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &open_curly_brace                  # "{"
 	call %match                                 # IF global_token->S == "{"
@@ -1209,6 +1247,8 @@ NULL
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->next
 	mov_[DWORD],eax &global_token               # global_token = global_token->next
+	cmp_eax, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	call %emit_out                              # emit it
@@ -1306,6 +1346,8 @@ Missing ;
 
 :recursive_statement_loop
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing }
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &close_curly_brace                 # Using "}"
 	call %match                                 # IF global_token->S == "}"
@@ -1366,6 +1408,8 @@ Missing ;
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->next
 	mov_[DWORD],eax &global_token               # global_token = global_token->next
+	cmp_eax, !0                                 # Check for EOF
+	je %return_result_cleanup                   # Missing ; will be reported below
 
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
@@ -1419,6 +1463,8 @@ MISSING ;
 
 	mov_ebx,eax                                 # Put struct type* type_size in the right place
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing local name
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	mov_ecx,[DWORD] &function                   # Using function
 	mov_ecx,[ecx+BYTE] !4                       # function->locals
@@ -1501,6 +1547,8 @@ MISSING ;
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->NEXT
 	mov_[DWORD],eax &global_token               # global_token = global_token->NEXT
+	cmp_eax, !0                                 # Check for EOF
+	je %collect_local_done                      # Missing ; will be reported below
 
 	mov_ebx,[eax+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # Using "="
@@ -1559,6 +1607,8 @@ Missing ;
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
 :process_asm_iter
+	cmp_ebx, !0                                 # IF we hit EOF
+	je %process_asm_done                        # report the missing close paren
 	mov_eax,[ebx+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
 	movzx_eax,al                                # Make it useful
@@ -1664,6 +1714,8 @@ MISSING ;
 	call %uniqueID_out                          # uniqueID_out(function->s, number_string)
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %process_if_done                         # No else branch
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &else_string                       # Using "else"
 	call %match                                 # IF global_token->S == "else"
@@ -1982,6 +2034,8 @@ MISSING )
 	call %require_match                         # Make Sure we have it
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &semicolon                         # Using ";"
 	call %match                                 # IF global_token->S == ";"
@@ -2194,6 +2248,8 @@ Missing ;
 	call %bitwise_expr                          # Collect bitwise expressions
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %expression_done                         # Nothing left to assign
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # "="
 	call %match                                 # IF global_token->S == "="
@@ -2506,6 +2562,8 @@ sar_eax,cl
 :postfix_expr_stub
 	push_ebx                                    # Protect EBX
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %postfix_expr_stub_done                  # No postfix suffix
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &open_bracket                      # Using "["
 	call %match                                 # IF global_token->S == "["
@@ -2586,6 +2644,8 @@ Missing )
 	push_ebx                                    # Protect EBX
 	push_ecx                                    # Protect ECX
 	mov_eax,[DWORD] &current_target             # ARRAY = current_target
+	cmp_eax, !0                                 # Check for bad target
+	je %Exit_Failure                            # Cannot subscript unknown target
 	push_eax                                    # Protect it
 
 	mov_eax, &expression                        # Using expression
@@ -2613,6 +2673,8 @@ Missing )
 
 	mov_eax,[DWORD] &current_target             # Using current_target
 	mov_eax,[eax+BYTE] !12                      # current_target->INDIRECT
+	cmp_eax, !0                                 # IF target is not indexable
+	je %Exit_Failure                            # Abort hard
 	mov_eax,[eax+BYTE] !4                       # current_target->INDIRECT->SIZE
 	call %ceil_log2                             # ceil_log2(current_target->indirect->size)
 	call %numerate_number                       # numerate_number(ceil_log2(current_target->indirect->size))
@@ -2630,6 +2692,8 @@ Missing )
 	call %require_match                         # Make sure we have it
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # IF we hit EOF
+	je %postfix_expr_array_done                 # Treat it as not being an assignment
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # Using "="
 	call %match                                 # IF global_token->S == "="
@@ -2708,8 +2772,16 @@ Missing ]
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->NEXT
 	mov_[DWORD],eax &global_token               # global_token = global_token->NEXT
+	cmp_eax, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 
 	mov_ebx,[eax+BYTE] !8                       # Using global_token->S
+	mov_eax,[DWORD] &current_target             # Using current_target
+	cmp_eax, !0                                 # IF target is unknown
+	je %Exit_Failure                            # Abort hard
+	mov_eax,[eax+BYTE] !16                      # current_target->MEMBERS
+	cmp_eax, !0                                 # IF target has no members
+	je %Exit_Failure                            # Abort hard
 	mov_eax,[DWORD] &current_target             # Using current_target
 	call %lookup_member                         # lookup_member(current_target, global_token->s)
 	mov_ebx,eax                                 # struct type* I = lookup_member(current_target, global_token->s)
@@ -2743,6 +2815,8 @@ Missing ]
 
 	# Last chance for load
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # IF we hit EOF
+	je %postfix_expr_arrow_load                 # Treat it as not being an assignment
 	mov_ebx,[eax+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # Using "="
 	call %match                                 # IF global_token->S == "="
@@ -2750,6 +2824,7 @@ Missing ]
 	je %postfix_expr_arrow_done                 # Be done
 
 	# Deal with load case
+:postfix_expr_arrow_load
 	mov_eax, &postfix_expr_arrow_string_3       # Using "mov_eax,[eax]\n"
 	call %emit_out                              # Emit it
 
@@ -2775,6 +2850,8 @@ add_eax,ebx
 	push_ebx                                    # Protect EBX
 
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # Check for EOF
+	je %Exit_Failure                            # Missing expression
 	mov_ebx,[eax+BYTE] !8                       # global_token->S
 	mov_eax, &sizeof_string                     # Using "sizeof"
 	call %match                                 # See if match
@@ -3063,6 +3140,8 @@ Didn't get )
 	call %emit_out                              # Emit it
 
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # Check for EOF
+	je %function_call_gen_done                  # Missing ) will be reported below
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
 	movzx_eax,al                                # Make it useful
@@ -3078,6 +3157,8 @@ Didn't get )
 
 :function_call_gen_iter
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # Check for EOF
+	je %function_call_gen_done                  # Missing ) will be reported below
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
 	movzx_eax,al                                # Make it useful
@@ -3208,6 +3289,8 @@ mov_eax,[eax]
 	mov_ecx,eax                                 # Protect A
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %variable_load_regular                   # EOF means not a call
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &open_paren                        # Using "("
 	call %match                                 # IF global_token->S == "("
@@ -3244,6 +3327,8 @@ mov_eax,[eax]
 
 	# Check for special case of assignment
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %variable_load_value                     # EOF means not an assignment
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # Using "="
 	call %match                                 # IF global_token->S == "="
@@ -3251,6 +3336,7 @@ mov_eax,[eax]
 	je %variable_load_done                      # And be done
 
 	# Deal with common case
+:variable_load_value
 	mov_eax, &variable_load_string_2            # Using "mov_eax,[eax]\n"
 	call %emit_out                              # Emit it
 
@@ -3276,6 +3362,8 @@ mov_eax,[eax]
 	mov_eax,[eax+BYTE] !8                       # A->S
 	mov_ecx,eax                                 # Protect A->S
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %function_load_regular                   # EOF means not a call
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &open_paren                        # Using "("
 	call %match                                 # IF global_token->S == "("
@@ -3330,6 +3418,8 @@ mov_eax,[eax]
 	call %emit_out                              # Emit it
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %global_load_value                       # EOF means this is not an assignment
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &equal                             # "="
 	call %match                                 # IF global_token->S == "="
@@ -3337,6 +3427,7 @@ mov_eax,[eax]
 	je %global_load_done                        # and be done
 
 	# Otherwise we are loading the contents
+:global_load_value
 	mov_eax, &global_load_string_2              # Using "mov_eax,[eax]\n"
 	call %emit_out                              # Emit it
 
@@ -3529,6 +3620,8 @@ mov_eax,[eax]
 	mov_ecx,ebx                                 # Protect S
 
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # Check for EOF
+	je %general_recursion_done                  # Nothing left to match
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	call %match                                 # IF match(name, global_token->s)
 	cmp_eax, !0                                 # If true we do
@@ -3646,11 +3739,14 @@ mov_eax,[eax]
 	push_ecx                                    # Protect ECX
 	mov_ecx,eax                                 # put the message somewhere safe
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # Check for EOF
+	je %require_match_bad                       # Missing required token
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	call %match                                 # IF required == global_token->S
 	cmp_eax, !0                                 # we are fine
 	je %require_match_good                      # otherwise pain
 
+:require_match_bad
 	# Deal will bad times
 #	call %line_error                            # Tell user what went wrong
 	mov_eax, %2                                 # Using standard error
@@ -4099,6 +4195,8 @@ mov_eax,[eax]
 	push_ebx                                    # Protect EBX
 	push_ecx                                    # Protect ECX
 	mov_ebx,[DWORD] &global_token               # Using global_token
+	cmp_ebx, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 	mov_ebx,[ebx+BYTE] !8                       # global_token->S
 	mov_eax, &struct                            # Using "struct"
 	call %match                                 # IF global_token->S == "struct"
@@ -4110,6 +4208,8 @@ mov_eax,[eax]
 	mov_ebx,[DWORD] &global_token               # Using global_token
 	mov_ebx,[ebx]                               # global_token->next
 	mov_[DWORD],ebx &global_token               # global_token = global_token->next
+	cmp_ebx, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 	mov_eax,[ebx+BYTE] !8                       # global_token->S
 	mov_ebx,[DWORD] &global_types               # get all known types
 	call %lookup_type                           # Find type if possible
@@ -4155,6 +4255,8 @@ mov_eax,[eax]
 	mov_[DWORD],ebx &global_token               # global_token = global_token->next
 
 :type_name_iter
+	cmp_ebx, !0                                 # Check for EOF
+	je %type_name_done                          # No more pointer qualifiers
 	mov_eax,[ebx+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
 	movzx_eax,al                                # make it useful
@@ -4239,6 +4341,8 @@ mov_eax,[eax]
 
 	mov_[edx+BYTE],ebp !12                      # HEAD->INDIRECT = I
 	mov_[ebp+BYTE],edx !12                      # I->INDIRECT = HEAD
+	mov_[edx+BYTE],edx !20                      # HEAD->TYPE = HEAD
+	mov_[ebp+BYTE],ebp !20                      # I->TYPE = I
 
 	mov_eax,[DWORD] &global_types               # Using global_types
 	mov_[edx],eax                               # HEAD->NEXT = global_types
@@ -4259,6 +4363,8 @@ mov_eax,[eax]
 
 :create_struct_iter
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	mov_al,[eax]                                # global_token->S[0]
 	movzx_eax,al                                # Make it useful
@@ -4384,10 +4490,14 @@ mov_eax,[eax]
 	mov_ecx,eax                                 # Put in place
 	mov_[edx+BYTE],ecx !20                      # I->TYPE = MEMBER_TYPE
 	mov_eax,[DWORD] &global_token               # Using global_token
+	cmp_eax, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 	mov_ebx,[eax+BYTE] !8                       # global_token->S
 	mov_[edx+BYTE],ebx !24                      # I->NAME = global_token->S
 	mov_eax,[eax]                               # global_token->NEXT
 	mov_[DWORD],eax &global_token               # global_token = global_token->NEXT
+	cmp_eax, !0                                 # IF we hit EOF
+	je %build_member_non_array                  # Let the caller report the missing semicolon
 
 	# Check if we have an array
 	mov_ebx,[eax+BYTE] !8                       # global_token->S
@@ -4397,6 +4507,7 @@ mov_eax,[eax]
 	je %build_member_array                      # So deal with that pain
 
 	# Deal with non-array case
+:build_member_non_array
 	mov_eax,[ecx+BYTE] !4                       # member_type->SIZE
 	mov_[edx+BYTE],eax !4                       # I->SIZE = member_type->SIZE
 	jmp %build_member_done                      # Be done
@@ -4405,6 +4516,8 @@ mov_eax,[eax]
 	mov_eax,[DWORD] &global_token               # Using global_token
 	mov_eax,[eax]                               # global_token->NEXT
 	mov_[DWORD],eax &global_token               # global_token = global_token->NEXT
+	cmp_eax, !0                                 # IF we hit EOF
+	je %Exit_Failure                            # Abort hard
 
 	mov_eax,[eax+BYTE] !8                       # global_token->S
 	call %numerate_string                       # convert number

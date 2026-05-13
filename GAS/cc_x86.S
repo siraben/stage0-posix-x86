@@ -204,11 +204,15 @@ get_token_comment:
 	mov [C], eax                # Set C
 get_token_comment_block_outer:
 	mov eax, [C]                # Using C
+	cmp eax, -4                 # Check for EOF
+	je reset                    # be done
 	cmp eax, 47                 # IF '/' != C
 	je get_token_comment_block_done # be done
 
 get_token_comment_block_inner:
 	mov eax, [C]                # Using C
+	cmp eax, -4                 # Check for EOF
+	je reset                    # be done
 	cmp eax, 42                 # IF '*' != C
 	je get_token_comment_block_iter # jump over
 
@@ -339,8 +343,11 @@ strings: .byte 34, 39, 0
 # returns line feed
 purge_macro:
 	call fgetc                  # read next char
+	cmp eax, -4                 # Check for EOF
+	je purge_macro_done         # Done if EOF
 	cmp eax, 10                 # Check for '\n'
 	jne purge_macro             # Keep going
+purge_macro_done:
 	ret
 
 
@@ -430,6 +437,8 @@ consume_word_escape:
 
 consume_word_iter:
 	call consume_byte           # read next char
+	cmp eax, -4                 # Check for EOF
+	je consume_word_done        # Stop if the string was not closed
 
 	cmp ecx, 0                  # IF ESCAPE
 	jne consume_word_loop       # keep looping
@@ -438,6 +447,7 @@ consume_word_iter:
 	jne consume_word_loop       # keep going
 
 	call fgetc                  # return next char
+consume_word_done:
 	pop ecx                     # Restore ECX
 	pop ebx                     # Restore EBX
 	ret
@@ -634,6 +644,8 @@ new_type:
 
 enumerator:
 	mov eax, [global_token]           # Using global token
+	cmp eax, 0                        # Check for EOF
+	je Exit_Failure                   # Missing enumerator
 	mov eax, [eax+8]                  # global_token->s
 	mov ebx, 0                        # NULL
 	mov ecx, [global_constant_list]   # global_constant_list
@@ -649,12 +661,16 @@ enumerator:
 	call require_match                # Require match and skip
 
 	mov ebx, [global_token]           # Using global_token
+	cmp ebx, 0                        # Check for EOF
+	je Exit_Failure                   # Missing enumerator value
 	mov eax, [global_constant_list]   # Use global_constant_list
 	mov [eax+16], ebx                 # global_constant_list->arguments = global_token
 
 	mov eax, [global_token]           # Using global_token
 	mov eax, [eax]                    # global_token->next
 	mov [global_token], eax           # global_token = global_token->next
+	cmp eax, 0                        # Check for EOF
+	je enum_end                       # Missing } will be reported below
 
 	mov eax, [global_token]           # Use global_token
 	mov ebx, [eax+8]                  # global_token->s
@@ -667,6 +683,8 @@ enumerator:
 	mov eax, [global_token]           # Using global_token
 	mov eax, [eax]                    # global_token->next
 	mov [global_token], eax           # global_token = global_token->next
+	cmp eax, 0                        # Check for EOF
+	je enum_end                       # Missing } will be reported below
 
 	# Check if there are more enumerators or if it was a trailing comma
 	mov ebx, [eax+8]                  # global_token->s
@@ -690,6 +708,9 @@ program_else:
 	call type_name              # Figure out the type_size
 	cmp eax, 0                  # IF NULL == type_size
 	je new_type                 # it was a new type
+	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je program_error            # Missing declarator
 
 	# Add to global symbol table
 	mov ebx, eax                # put type_size in the right spot
@@ -701,6 +722,8 @@ program_else:
 	mov ebx, [global_token]     # Using global token
 	mov ebx, [ebx]              # global_token->next
 	mov [global_token], ebx     # global_token = global_token->next
+	cmp ebx, 0                  # Check for EOF
+	je program_error            # Missing ; or function body
 
 	mov ebx, [global_token]     # Using global token
 	mov ebx, [ebx+8]            # global_token->S
@@ -744,7 +767,7 @@ program_function:
 
 program_error:
 	# Deal with the case of something we don't support
-	# NOT IMPLEMENTED
+	jmp Exit_Failure            # Abort
 
 program_done:
 	pop ecx                     # Restore ECX
@@ -777,6 +800,8 @@ declare_function:
 	call collect_arguments      # collect all of the function arguments
 
 	mov eax, [global_token]     # Using global token
+	cmp eax, 0                  # Check for EOF
+	je Exit_Failure             # Missing prototype ; or body
 	mov eax, [eax+8]            # global token->s
 	mov ebx, OFFSET semicolon   # ";"
 	call match                  # IF global token->s == ";"
@@ -845,6 +870,8 @@ collect_arguments:
 	mov [global_token], eax     # global_token = global_token->next
 collect_arguments_loop:
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je Exit_Failure             # Missing )
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET close_paren # ")"
 	call match                  # IF global_token->S == ")"
@@ -854,6 +881,9 @@ collect_arguments_loop:
 	# deal with the case of there are arguments
 	call type_name              # Get the type
 	mov ecx, eax                # put type_size safely out of the way
+	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je Exit_Failure             # Missing argument or )
 
 	mov ebx, [global_token]     # Using global_token
 	mov ebx, [ebx+8]            # global_token->S
@@ -907,6 +937,8 @@ collect_arguments_next:
 
 collect_arguments_common:
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je Exit_Failure             # Missing )
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET comma       # ","
 	call match                  # IF global_token->S == ","
@@ -917,6 +949,8 @@ collect_arguments_common:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->next
 	mov [global_token], eax     # global_token = global_token->next
+	cmp eax, 0                  # Check for EOF
+	je Exit_Failure             # Missing argument after comma
 	jmp collect_arguments_loop  # keep going
 
 collect_arguments_done:
@@ -937,6 +971,8 @@ statement:
 	push ecx                    # Protect ECX
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je Exit_Failure             # Missing statement
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET open_curly_brace # "{"
 	call match                  # IF global_token->S == "{"
@@ -1046,6 +1082,8 @@ statement_goto:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->next
 	mov [global_token], eax     # global_token = global_token->next
+	cmp eax, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 
 	mov eax, [eax+8]            # global_token->S
 	call emit_out               # emit it
@@ -1137,6 +1175,8 @@ recursive_statement:
 
 recursive_statement_loop:
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je Exit_Failure             # Missing }
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET close_curly_brace # Using "}"
 	call match                  # IF global_token->S == "}"
@@ -1195,6 +1235,8 @@ return_result:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->next
 	mov [global_token], eax     # global_token = global_token->next
+	cmp eax, 0                  # Check for EOF
+	je return_result_cleanup    # Missing ; will be reported below
 
 	mov eax, [eax+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
@@ -1244,6 +1286,8 @@ collect_local:
 
 	mov ebx, eax                # Put struct type* type_size in the right place
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # Check for EOF
+	je Exit_Failure             # Missing local name
 	mov eax, [eax+8]            # global_token->S
 	mov ecx, [function]         # Using function
 	mov ecx, [ecx+4]            # function->locals
@@ -1326,6 +1370,8 @@ collect_local_common:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->NEXT
 	mov [global_token], eax     # global_token = global_token->NEXT
+	cmp eax, 0                  # Check for EOF
+	je collect_local_done       # Missing ; will be reported below
 
 	mov ebx, [eax+8]            # global_token->S
 	mov eax, OFFSET equal       # Using "="
@@ -1381,6 +1427,8 @@ process_asm:
 
 	mov ebx, [global_token]     # Using global_token
 process_asm_iter:
+	cmp ebx, 0                  # IF we hit EOF
+	je process_asm_done         # report the missing close paren
 	mov eax, [ebx+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
 	movzx eax, al               # Make it useful
@@ -1479,6 +1527,8 @@ process_if:
 	call uniqueID_out           # uniqueID_out(function->s, number_string)
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je process_if_done          # No else branch
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET else_string # Using "else"
 	call match                  # IF global_token->S == "else"
@@ -1778,6 +1828,8 @@ process_for:
 	call require_match          # Make Sure we have it
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET semicolon   # Using ";"
 	call match                  # IF global_token->S == ";"
@@ -1977,6 +2029,8 @@ expression:
 	call bitwise_expr           # Collect bitwise expressions
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je expression_done          # Nothing left to assign
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET equal       # "="
 	call match                  # IF global_token->S == "="
@@ -2249,6 +2303,8 @@ postfix_expr:
 postfix_expr_stub:
 	push ebx                    # Protect EBX
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je postfix_expr_stub_done   # No postfix suffix
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET open_bracket # Using "["
 	call match                  # IF global_token->S == "["
@@ -2324,6 +2380,8 @@ postfix_expr_array:
 	push ebx                    # Protect EBX
 	push ecx                    # Protect ECX
 	mov eax, [current_target]   # ARRAY = current_target
+	cmp eax, 0                  # Check for bad target
+	je Exit_Failure             # Cannot subscript unknown target
 	push eax                    # Protect it
 
 	mov eax, OFFSET expression  # Using expression
@@ -2351,6 +2409,8 @@ postfix_expr_array_large:
 
 	mov eax, [current_target]   # Using current_target
 	mov eax, [eax+12]           # current_target->INDIRECT
+	cmp eax, 0                  # IF target is not indexable
+	je Exit_Failure             # Abort hard
 	mov eax, [eax+4]            # current_target->INDIRECT->SIZE
 	call ceil_log2              # ceil_log2(current_target->indirect->size)
 	call numerate_number        # numerate_number(ceil_log2(current_target->indirect->size))
@@ -2368,6 +2428,8 @@ postfix_expr_array_common:
 	call require_match          # Make sure we have it
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # IF we hit EOF
+	je postfix_expr_array_done  # Treat it as not being an assignment
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET equal       # Using "="
 	call match                  # IF global_token->S == "="
@@ -2440,8 +2502,16 @@ postfix_expr_arrow:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->NEXT
 	mov [global_token], eax     # global_token = global_token->NEXT
+	cmp eax, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 
 	mov ebx, [eax+8]            # Using global_token->S
+	mov eax, [current_target]   # Using current_target
+	cmp eax, 0                  # IF target is unknown
+	je Exit_Failure             # Abort hard
+	mov eax, [eax+16]           # current_target->MEMBERS
+	cmp eax, 0                  # IF target has no members
+	je Exit_Failure             # Abort hard
 	mov eax, [current_target]   # Using current_target
 	call lookup_member          # lookup_member(current_target, global_token->s)
 	mov ebx, eax                # struct type* I = lookup_member(current_target, global_token->s)
@@ -2475,6 +2545,8 @@ postfix_expr_arrow_first:
 
 	# Last chance for load
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # IF we hit EOF
+	je postfix_expr_arrow_load  # Treat it as not being an assignment
 	mov ebx, [eax+8]            # global_token->S
 	mov eax, OFFSET equal       # Using "="
 	call match                  # IF global_token->S == "="
@@ -2482,6 +2554,7 @@ postfix_expr_arrow_first:
 	je postfix_expr_arrow_done  # Be done
 
 	# Deal with load case
+postfix_expr_arrow_load:
 	mov eax, OFFSET postfix_expr_arrow_string_3 # Using "mov_eax,[eax]\n"
 	call emit_out               # Emit it
 
@@ -2502,6 +2575,8 @@ primary_expr:
 	push ebx                    # Protect EBX
 
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # Check for EOF
+	je Exit_Failure             # Missing expression
 	mov ebx, [eax+8]            # global_token->S
 	mov eax, OFFSET sizeof_string # Using "sizeof"
 	call match                  # See if match
@@ -2778,6 +2853,8 @@ function_call:
 	call emit_out               # Emit it
 
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # Check for EOF
+	je function_call_gen_done   # Missing ) will be reported below
 	mov eax, [eax+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
 	movzx eax, al               # Make it useful
@@ -2793,6 +2870,8 @@ function_call:
 
 function_call_gen_iter:
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # Check for EOF
+	je function_call_gen_done   # Missing ) will be reported below
 	mov eax, [eax+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
 	movzx eax, al               # Make it useful
@@ -2906,6 +2985,8 @@ variable_load:
 	mov ecx, eax                # Protect A
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je variable_load_regular    # EOF means not a call
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET open_paren  # Using "("
 	call match                  # IF global_token->S == "("
@@ -2942,6 +3023,8 @@ variable_load_regular:
 
 	# Check for special case of assignment
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je variable_load_value      # EOF means not an assignment
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET equal       # Using "="
 	call match                  # IF global_token->S == "="
@@ -2949,6 +3032,7 @@ variable_load_regular:
 	je variable_load_done       # And be done
 
 	# Deal with common case
+variable_load_value:
 	mov eax, OFFSET variable_load_string_2 # Using "mov_eax,[eax]\n"
 	call emit_out               # Emit it
 
@@ -2972,6 +3056,8 @@ function_load:
 	mov eax, [eax+8]            # A->S
 	mov ecx, eax                # Protect A->S
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je function_load_regular    # EOF means not a call
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET open_paren  # Using "("
 	call match                  # IF global_token->S == "("
@@ -3025,6 +3111,8 @@ global_load:
 	call emit_out               # Emit it
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je global_load_value        # EOF means this is not an assignment
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET equal       # "="
 	call match                  # IF global_token->S == "="
@@ -3032,6 +3120,7 @@ global_load:
 	je global_load_done         # and be done
 
 	# Otherwise we are loading the contents
+global_load_value:
 	mov eax, OFFSET global_load_string_2 # Using "mov_eax,[eax]\n"
 	call emit_out               # Emit it
 
@@ -3219,6 +3308,8 @@ general_recursion:
 	mov ecx, ebx                # Protect S
 
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # Check for EOF
+	je general_recursion_done   # Nothing left to match
 	mov ebx, [ebx+8]            # global_token->S
 	call match                  # IF match(name, global_token->s)
 	cmp eax, 0                  # If true we do
@@ -3334,11 +3425,14 @@ require_match:
 	push ecx                    # Protect ECX
 	mov ecx, eax                # put the message somewhere safe
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # Check for EOF
+	je require_match_bad        # Missing required token
 	mov eax, [eax+8]            # global_token->S
 	call match                  # IF required == global_token->S
 	cmp eax, 0                  # we are fine
 	je require_match_good       # otherwise pain
 
+require_match_bad:
 	# Deal with bad times
 #	call line_error             # Tell user what went wrong
 	mov eax, 2                  # Using standard error
@@ -3783,6 +3877,8 @@ type_name:
 	push ebx                    # Protect EBX
 	push ecx                    # Protect ECX
 	mov ebx, [global_token]     # Using global_token
+	cmp ebx, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 	mov ebx, [ebx+8]            # global_token->S
 	mov eax, OFFSET struct      # Using "struct"
 	call match                  # IF global_token->S == "struct"
@@ -3794,6 +3890,8 @@ type_name:
 	mov ebx, [global_token]     # Using global_token
 	mov ebx, [ebx]              # global_token->next
 	mov [global_token], ebx     # global_token = global_token->next
+	cmp ebx, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 	mov eax, [ebx+8]            # global_token->S
 	mov ebx, [global_types]     # get all known types
 	call lookup_type            # Find type if possible
@@ -3839,6 +3937,8 @@ type_name_common:
 	mov [global_token], ebx     # global_token = global_token->next
 
 type_name_iter:
+	cmp ebx, 0                  # Check for EOF
+	je type_name_done           # No more pointer qualifiers
 	mov eax, [ebx+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
 	movzx eax, al               # make it useful
@@ -3922,6 +4022,8 @@ create_struct:
 
 	mov [edx+12], ebp           # HEAD->INDIRECT = I
 	mov [ebp+12], edx           # I->INDIRECT = HEAD
+	mov [edx+20], edx           # HEAD->TYPE = HEAD
+	mov [ebp+20], ebp           # I->TYPE = I
 
 	mov eax, [global_types]     # Using global_types
 	mov [edx], eax              # HEAD->NEXT = global_types
@@ -3942,6 +4044,8 @@ create_struct:
 
 create_struct_iter:
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 	mov eax, [eax+8]            # global_token->S
 	mov al, [eax]               # global_token->S[0]
 	movzx eax, al               # Make it useful
@@ -4061,10 +4165,14 @@ build_member:
 	mov ecx, eax                # Put in place
 	mov [edx+20], ecx           # I->TYPE = MEMBER_TYPE
 	mov eax, [global_token]     # Using global_token
+	cmp eax, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 	mov ebx, [eax+8]            # global_token->S
 	mov [edx+24], ebx           # I->NAME = global_token->S
 	mov eax, [eax]              # global_token->NEXT
 	mov [global_token], eax     # global_token = global_token->NEXT
+	cmp eax, 0                  # IF we hit EOF
+	je build_member_non_array   # Let the caller report the missing semicolon
 
 	# Check if we have an array
 	mov ebx, [eax+8]            # global_token->S
@@ -4074,6 +4182,7 @@ build_member:
 	je build_member_array       # So deal with that pain
 
 	# Deal with non-array case
+build_member_non_array:
 	mov eax, [ecx+4]            # member_type->SIZE
 	mov [edx+4], eax            # I->SIZE = member_type->SIZE
 	jmp build_member_done       # Be done
@@ -4082,6 +4191,8 @@ build_member_array:
 	mov eax, [global_token]     # Using global_token
 	mov eax, [eax]              # global_token->NEXT
 	mov [global_token], eax     # global_token = global_token->NEXT
+	cmp eax, 0                  # IF we hit EOF
+	je Exit_Failure             # Abort hard
 
 	mov eax, [eax+8]            # global_token->S
 	call numerate_string        # convert number

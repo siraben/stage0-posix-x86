@@ -60,8 +60,7 @@
 ###################################
 # Phase-4 Build cc_x86 from M0    #
 ###################################
-./x86/artifact/M0 ./x86/cc_x86.M1 ./x86/artifact/cc_x86-0.hex2
-./x86/artifact/catm ./x86/artifact/cc_x86-1.hex2 ./x86/ELF-i386.hex2 ./x86/artifact/cc_x86-0.hex2
+./x86/artifact/catm ./x86/artifact/cc_x86-1.hex2 ./x86/ELF-i386.hex2 ./x86/cc_x86.hex2
 ./x86/artifact/hex2-0 ./x86/artifact/cc_x86-1.hex2 ./x86/artifact/cc_x86
 
 

@@ -3,6 +3,6 @@ This folder contains the x86 specific parts of stage0-posix and was separated ou
 To use this in your project:
 1) add it as a git submodule (or just extract into a folder) named x86
 2) create a kaem.x86 file (if you are using bootstrap-seeds)
-3) create an after.kaem file to hook your tools you wish to have built after these
+3) create an after.bake file to hook your tools you wish to have built after these
 
 The master location of this code is: https://github.com/oriansj/stage0-posix-x86

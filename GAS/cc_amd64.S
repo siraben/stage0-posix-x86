@@ -680,9 +680,9 @@ enum_end:
 	lea ebx, [close_curly_brace]      # Using "}"
 	call require_match                # Require match and skip
 
-	ea eax, [enum_error_semi_colon]  # Using "ERROR in enum\nExpected ;\n"
-	ea ebx, [semicolon]              # Using ";"
-	all require_match                # Require match and skip
+	lea eax, [enum_error_semi_colon]  # Using "ERROR in enum\nExpected ;\n"
+	lea ebx, [semicolon]              # Using ";"
+	call require_match                # Require match and skip
 
 	jmp new_type                      # go around again
 

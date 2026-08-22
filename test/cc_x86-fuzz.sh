@@ -69,3 +69,9 @@ check_no_crash scalar-array-index-eof 'int n(){int x;x[0]'
 check_no_crash struct-array-load-eof 'struct S{char*s;int y[4];};int n(){struct S*p;p->s="";return p->y[0]'
 check_no_crash scalar-arrow-member-eof 'int n(){int x;1->y'
 check_no_crash struct-array-member-type-eof 'struct S{S e[a'
+
+# Tokens longer than the 256 byte token buffer must fail cleanly
+padding=$(dd if=/dev/zero bs=1024 count=16 2>/dev/null | tr '\0' 'a')
+check_no_crash long-identifier "int ${padding};
+int main() { return 0; }"
+check_no_crash long-string-literal "int main() { char* p = \"${padding}\"; return 0; }"

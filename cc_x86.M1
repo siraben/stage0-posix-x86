@@ -143,6 +143,7 @@ DEFINE shr_eax, C1E8
 DEFINE shr_ebx, C1EB
 DEFINE sub_eax, 83E8
 DEFINE sub_ecx, 83E9
+DEFINE sub_ecx,[DWORD] 2B0D
 DEFINE sub_esi, 83EE
 DEFINE xchg_eax,ebx 93
 
@@ -280,6 +281,7 @@ DEFINE xchg_eax,ebx 93
 	mov_[edx+BYTE],ecx !8                       # CURRENT->S = S
 :reset
 	mov_[DWORD],ecx &string_index               # S[0]
+	mov_[DWORD],ecx &string_start               # Remember where this token's buffer begins
 	mov_eax,[DWORD] &C                          # Using C
 
 	call %clear_white_space                     # Clear WhiteSpace
@@ -601,18 +603,37 @@ DEFINE xchg_eax,ebx 93
 
 
 # consume_byte function
+# consume_byte function
 # Receives INT C in EAX
 # Inserts C into string S, updates String S
+# Aborts hard if the token no longer fits in its buffer
 # Returns Next char in EAX
 :consume_byte
 	push_ebx                                    # Protect EBX
+	push_ecx                                    # Protect ECX
 	mov_ebx,[DWORD] &string_index               # S[0]
+	mov_ecx,ebx                                 # Copy the index
+	sub_ecx,[DWORD] &string_start               # Find offset into the token buffer
+	sub_ecx, !127                               # Reduce by the largest value that fits in a byte
+	sub_ecx, !127                               # Twice, since 254 does not fit in a signed byte
+	jg %consume_byte_overflow                   # IF anything remains the token is too long
 	mov_[ebx],al                                # S[0] = C
 	add_ebx, !1                                 # S = S + 1
 	mov_[DWORD],ebx &string_index               # Update S
 	call %fgetc
+	pop_ecx                                     # Restore ECX
 	pop_ebx                                     # Restore EBX
 	ret
+
+:consume_byte_overflow
+	mov_eax, %2                                 # Using standard error
+	mov_[DWORD],eax &Output_file                # Write to standard error
+	mov_eax, &consume_byte_string_0             # Using "Token exceeded MAX_STRING char limit\n"
+	call %File_Print                            # Print it
+	jmp %Exit_Failure                           # Abort hard
+
+:consume_byte_string_0  "Token exceeded MAX_STRING char limit
+"
 
 
 # fixup_label function
@@ -5044,6 +5065,8 @@ ARGUMENTS address: "
 :output_list
 	NULL
 :string_index
+	NULL
+:string_start
 	NULL
 :strings_list
 	NULL

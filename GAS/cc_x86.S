@@ -133,6 +133,7 @@ get_token:
 	mov [edx+8], ecx            # CURRENT->S = S
 reset:
 	mov [string_index], ecx     # S[0]
+	mov [string_start], ecx     # Remember where this token's buffer begins
 	mov eax, [C]                # Using C
 
 	call clear_white_space      # Clear WhiteSpace
@@ -456,16 +457,33 @@ consume_word_done:
 # consume_byte function
 # Receives INT C in EAX
 # Inserts C into string S, updates String S
+# Aborts hard if the token no longer fits in its buffer
 # Returns Next char in EAX
 consume_byte:
 	push ebx                    # Protect EBX
+	push ecx                    # Protect ECX
 	mov ebx, [string_index]     # S[0]
+	mov ecx, ebx                # Copy the index
+	sub ecx, [string_start]     # Find offset into the token buffer
+	sub ecx, 127                # Reduce by the largest value that fits in a byte
+	sub ecx, 127                # Twice, since 254 does not fit in a signed byte
+	jg consume_byte_overflow    # IF anything remains the token is too long
 	mov [ebx], al               # S[0] = C
 	add ebx, 1                  # S = S + 1
 	mov [string_index], ebx     # Update S
 	call fgetc
+	pop ecx                     # Restore ECX
 	pop ebx                     # Restore EBX
 	ret
+
+consume_byte_overflow:
+	mov eax, 2                  # Using standard error
+	mov [Output_file], eax      # Write to standard error
+	mov eax, OFFSET consume_byte_string_0 # Using "Token exceeded MAX_STRING char limit\n"
+	call File_Print             # Print it
+	jmp Exit_Failure            # Abort hard
+
+consume_byte_string_0: .asciz "Token exceeded MAX_STRING char limit\n"
 
 
 # fixup_label function
@@ -4695,4 +4713,5 @@ global_types: .int prim_types
 globals_list: .int 0
 output_list: .int 0
 string_index: .int 0
+string_start: .int 0
 strings_list: .int 0

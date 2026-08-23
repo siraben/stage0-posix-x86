@@ -416,16 +416,37 @@ DEFINE xchg_eax,ebx 93
 # Malloc isn't actually required if the program being built fits in the initial memory
 # However, it doesn't take much to add it.
 # Requires [MALLOC] to be initialized and EAX to have the number of desired bytes
+# Grows the heap a megabyte at a time so most allocations cost no syscall,
+# instead of doing one brk syscall per allocation
 :malloc
 	push_ebx                                    # Protect EBX
 	push_ecx                                    # Protect ECX
 	push_edx                                    # Protect EDX
-	mov_ebx,[DWORD] &MALLOC                     # Using the current pointer
-	add_ebx,eax                                 # Request the number of desired bytes
+	mov_ecx,eax                                 # Save the requested size
+	mov_eax,[DWORD] &MALLOC                     # Using the current pointer
+	add_eax,ecx                                 # End of the requested allocation
+	mov_ebx,[DWORD] &HEAP_END                   # How far we may go
+	cmp_eax,ebx                                 # Allocation ends beyond that?
+	jg %malloc_grow                             # Yep, ask the kernel for more
+	jmp %malloc_have                            # Nope, no syscall needed
+
+:malloc_grow
+	mov_eax,[DWORD] &MALLOC                     # Using the current pointer
+	add_eax,ecx                                 # At minimum cover this allocation
+	mov_ebx,eax                                 # Desired new break
+	mov_eax, %1
+	sal_eax, !20                                # One megabyte
+	add_ebx,eax                                 # Grow by that much more
 	mov_eax, %45                                # the Syscall # for SYS_BRK
 	int !0x80                                   # call the Kernel
-	mov_eax,[DWORD] &MALLOC                     # Return pointer
-	mov_[DWORD],ebx &MALLOC                     # Update pointer
+	mov_[DWORD],eax &HEAP_END                   # Record how far we may now go
+
+:malloc_have
+	mov_eax,[DWORD] &MALLOC                     # Pointer we will return
+	mov_ebx,eax                                 # Set it aside
+	add_eax,ecx                                 # Consume the requested bytes
+	mov_[DWORD],eax &MALLOC                     # Update the pointer
+	mov_eax,ebx                                 # Return the saved pointer
 	pop_edx                                     # Restore EDX
 	pop_ecx                                     # Restore ECX
 	pop_ebx                                     # Restore EBX
@@ -5138,6 +5159,8 @@ ARGUMENTS address: "
 :output_fd
 	NULL
 :output_count
+	NULL
+:HEAP_END
 	NULL
 
 :ELF_end

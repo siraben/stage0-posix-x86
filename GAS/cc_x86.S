@@ -269,16 +269,27 @@ get_token_abort:
 # Malloc isn't actually required if the program being built fits in the initial memory
 # However, it doesn't take much to add it.
 # Requires [MALLOC] to be initialized and EAX to have the number of desired bytes
+# Grows the heap a megabyte at a time so most allocations cost no syscall,
+# instead of doing one brk syscall per allocation
 malloc:
 	push ebx                    # Protect EBX
 	push ecx                    # Protect ECX
 	push edx                    # Protect EDX
+	mov ecx, eax                # Save the requested size
 	mov ebx, [MALLOC]           # Using the current pointer
-	add ebx, eax                # Request the number of desired bytes
+	add ebx, ecx                # End of the requested allocation
+	cmp ebx, [HEAP_END]         # Does it fit in what we already have?
+	jbe malloc_have             # Yes, no syscall needed
+
+	# Ask the kernel to grow the heap by at least a megabyte
+	add ebx, 1048576            # A healthy chunk beyond our immediate need
 	mov eax, 45                 # the Syscall # for SYS_BRK
 	int 0x80                    # call the Kernel
+	mov [HEAP_END], eax         # Record how far we may now go
+
+malloc_have:
 	mov eax, [MALLOC]           # Return pointer
-	mov [MALLOC], ebx           # Update pointer
+	add [MALLOC], ecx           # Consume the requested bytes
 	pop edx                     # Restore EDX
 	pop ecx                     # Restore ECX
 	pop ebx                     # Restore EBX
@@ -4778,3 +4789,4 @@ input_limit: .int 0
 output_buffer: .int 0
 output_fd: .int 0
 output_count: .int 0
+HEAP_END: .int 0

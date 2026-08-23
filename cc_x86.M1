@@ -194,6 +194,9 @@ DEFINE xchg_eax,ebx 93
 	mov_ebx, %0                                 # Get current brk
 	int !0x80                                   # Let the kernel do the work
 	mov_[DWORD],eax &MALLOC                     # Set our malloc pointer
+	mov_eax, %4096                              # Size of the input buffer
+	call %malloc                                # Get it
+	mov_[DWORD],eax &input_buffer               # Preserve the pointer
 	mov_eax, %0                                 # HEAD = NULL
 	call %read_all_tokens                       # Read all tokens
 	call %Reverse_List                          # Reverse order
@@ -643,22 +646,43 @@ DEFINE xchg_eax,ebx 93
 # fgetc function
 # Loads FILE* from [INPUT_FILE]
 # Returns -4 (EOF) or char in EAX
+# Serves chars from a buffer refilled with one read syscall at a time,
+# instead of doing a read syscall for every single char
 :fgetc
 	push_ebx                                    # Protect EBX
 	push_ecx                                    # Protect ECX
 	push_edx                                    # Protect EDX
-	mov_eax, %-4                                # Put EOF in eax
-	push_eax                                    # Assume bad (If nothing read, value will remain EOF)
-	lea_ecx,[esp]                               # Get stack address
+	mov_ecx,[DWORD] &input_index                # Current offset into the buffer
+	mov_eax,[DWORD] &input_limit                # How many chars are buffered
+	cmp_eax,ecx                                 # Consumed everything read so far?
+	jg %fgetc_buffered                          # Still have buffered bytes left
+
+	# Refill the buffer using a single read syscall
 	mov_ebx,[DWORD] &Input_file                 # Where are we reading from
+	mov_ecx,[DWORD] &input_buffer               # Where to put it
+	mov_edx, %4096                              # How many chars we want
 	mov_eax, %3                                 # the syscall number for read
-	mov_edx, %1                                 # set the size of chars we want
 	int !0x80                                   # call the Kernel
-	pop_eax                                     # Get either char or EOF
-	cmp_eax, !-4                                # Check for EOF
-	je %fgetc_done                              # Return as is
+	cmp_eax, !0                                 # Check for EOF or error
+	jle %fgetc_eof                              # Nothing read means EOF
+	mov_[DWORD],eax &input_limit                # Save how many chars we received
+	mov_ecx, %0                                 # Restart at the start of the buffer
+
+:fgetc_buffered
+	mov_eax,[DWORD] &input_buffer               # Where the buffer lives
+	add_eax,ecx                                 # Address of the buffered char
+	mov_al,[eax]                                # Read it
 	movzx_eax,al                                # Make it useful
-:fgetc_done
+	add_ecx, !1                                 # Consume the char
+	mov_[DWORD],ecx &input_index                # Update our position
+
+	pop_edx                                     # Restore EDX
+	pop_ecx                                     # Restore ECX
+	pop_ebx                                     # Restore EBX
+	ret
+
+:fgetc_eof
+	mov_eax, %-4                                # Put EOF in eax
 	pop_edx                                     # Restore EDX
 	pop_ecx                                     # Restore ECX
 	pop_ebx                                     # Restore EBX
@@ -5046,6 +5070,12 @@ ARGUMENTS address: "
 :string_index
 	NULL
 :strings_list
+	NULL
+:input_buffer
+	NULL
+:input_index
+	NULL
+:input_limit
 	NULL
 
 :ELF_end

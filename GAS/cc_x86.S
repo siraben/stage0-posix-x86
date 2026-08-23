@@ -57,6 +57,9 @@ _start_out:
 	mov ebx, 0                  # Get current brk
 	int 0x80                    # Let the kernel do the work
 	mov [MALLOC], eax           # Set our malloc pointer
+	mov eax, 4096               # Size of the input buffer
+	call malloc                 # Get it
+	mov [input_buffer], eax     # Preserve the pointer
 	mov eax, 0                  # HEAD = NULL
 	call read_all_tokens        # Read all tokens
 	call Reverse_List           # Reverse order
@@ -496,22 +499,41 @@ fixup_label_loop:
 # fgetc function
 # Loads FILE* from [INPUT_FILE]
 # Returns -4 (EOF) or char in EAX
+# Serves chars from a buffer refilled with one read syscall at a time,
+# instead of doing a read syscall for every single char
 fgetc:
 	push ebx                    # Protect EBX
 	push ecx                    # Protect ECX
 	push edx                    # Protect EDX
-	mov eax, -4                 # Put EOF in eax
-	push eax                    # Assume bad (If nothing read, value will remain EOF)
-	lea ecx, [esp]              # Get stack address
+	mov ecx, [input_index]      # Current offset into the buffer
+	cmp ecx, [input_limit]      # Consumed everything read so far?
+	jl fgetc_buffered           # Still have buffered bytes left
+
+	# Refill the buffer using a single read syscall
 	mov ebx, [Input_file]       # Where are we reading from
+	mov ecx, [input_buffer]     # Where to put it
+	mov edx, 4096               # How many chars we want
 	mov eax, 3                  # the syscall number for read
-	mov edx, 1                  # set the size of chars we want
 	int 0x80                    # call the Kernel
-	pop eax                     # Get either char or EOF
-	cmp eax, -4                 # Check for EOF
-	je fgetc_done               # Return as is
+	cmp eax, 0                  # Check for EOF or error
+	jle fgetc_eof               # Nothing read means EOF
+	mov [input_limit], eax      # Save how many chars we received
+	mov ecx, 0                  # Restart at the start of the buffer
+
+fgetc_buffered:
+	mov ebx, [input_buffer]     # Where the buffer lives
+	mov al, [ebx+ecx]           # Read the buffered char
 	movzx eax, al               # Make it useful
-fgetc_done:
+	add ecx, 1                  # Consume the char
+	mov [input_index], ecx      # Update our position
+
+	pop edx                     # Restore EDX
+	pop ecx                     # Restore ECX
+	pop ebx                     # Restore EBX
+	ret
+
+fgetc_eof:
+	mov eax, -4                 # Put EOF in eax
 	pop edx                     # Restore EDX
 	pop ecx                     # Restore ECX
 	pop ebx                     # Restore EBX
@@ -4696,3 +4718,6 @@ globals_list: .int 0
 output_list: .int 0
 string_index: .int 0
 strings_list: .int 0
+input_buffer: .int 0
+input_index: .int 0
+input_limit: .int 0

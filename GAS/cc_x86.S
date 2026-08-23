@@ -60,6 +60,9 @@ _start_out:
 	mov eax, 4096               # Size of the input buffer
 	call malloc                 # Get it
 	mov [input_buffer], eax     # Preserve the pointer
+	mov eax, 4096               # Size of the output buffer
+	call malloc                 # Get it
+	mov [output_buffer], eax    # Preserve the pointer
 	mov eax, 0                  # HEAD = NULL
 	call read_all_tokens        # Read all tokens
 	call Reverse_List           # Reverse order
@@ -85,6 +88,7 @@ _start_out:
 
 Done:
 	# program completed Successfully
+	call fputc_flush            # Write out anything still buffered
 	mov ebx, 0                  # All is well
 	mov eax, 1                  # put the exit syscall number in eax
 	int 0x80                    # Call it a good day
@@ -614,21 +618,70 @@ File_Print_Done:
 
 # fputc function
 # receives CHAR in EAX and load FILE* from [OUTPUT_FILE]
-# writes char and returns
+# Adds the char to a buffer that is written out with one write syscall
+# per full buffer (or when the output target changes) instead of doing
+# a write syscall for every single char
 fputc:
 	push ebx                    # Protect EBX
 	push ecx                    # Protect ECX
 	push edx                    # Protect EDX
-	push eax                    # We are writing eax
-	lea ecx, [esp]              # Get stack address
-	mov ebx, [Output_file]      # Write to target file
-	mov eax, 4                  # the syscall number for write
-	mov edx, 1                  # set the size of chars we want
-	int 0x80                    # call the Kernel
-	pop eax                     # Restore stack
+	push eax                    # Protect the char across flushes
+
+	mov ecx, [output_fd]        # fd our buffer is currently bound to
+	cmp ecx, [Output_file]      # Writing somewhere else now?
+	je fputc_space              # Nope
+
+	call fputc_flush            # Empty what was headed elsewhere
+	mov eax, [Output_file]      # Rebind buffer to the new target
+	mov [output_fd], eax
+
+fputc_space:
+	mov eax, [output_count]     # Bytes waiting in the buffer
+	cmp eax, 4096               # Buffer full?
+	jl fputc_store              # Nope, room remains
+
+	call fputc_flush            # Write out what we have
+
+fputc_store:
+	pop eax                     # Recover the char
+	mov ebx, [output_buffer]    # Where the buffer lives
+	mov ecx, [output_count]     # Next free slot
+	mov [ebx+ecx], al           # Store the byte
+	add ecx, 1                  # One more byte pending
+	mov [output_count], ecx     # Update count
+
 	pop edx                     # Restore EDX
 	pop ecx                     # Restore ECX
 	pop ebx                     # Restore EBX
+	ret
+
+
+# fputc_flush function
+# Writes any bytes waiting in the output buffer to its bound file
+# and marks the buffer empty
+# Preserves EAX, EBX, ECX and EDX
+fputc_flush:
+	push eax                    # Protect EAX
+	push ebx                    # Protect EBX
+	push ecx                    # Protect ECX
+	push edx                    # Protect EDX
+	mov eax, [output_count]     # How many bytes are pending
+	cmp eax, 0                  # Anything to do?
+	je fputc_flush_done         # Nope
+
+	mov edx, eax                # Set the size of chars we want
+	mov ecx, [output_buffer]    # What we are writing
+	mov ebx, [output_fd]        # Write to the bound target
+	mov eax, 4                  # the syscall number for write
+	int 0x80                    # call the Kernel
+	mov eax, 0                  # Buffer is now empty
+	mov [output_count], eax
+
+fputc_flush_done:
+	pop edx                     # Restore EDX
+	pop ecx                     # Restore ECX
+	pop ebx                     # Restore EBX
+	pop eax                     # Restore EAX
 	ret
 
 enum_error_open_curly: .asciz "ERROR in enum\nExpected {\n"
@@ -4460,6 +4513,7 @@ numerate_string_done:
 # And aborts hard
 # Does NOT return
 Exit_Failure:
+	call fputc_flush            # Write out anything still buffered
 	mov ebx, 1                  # All is wrong
 	mov eax, 1                  # put the exit syscall number in eax
 	int 0x80                    # Call it a bad day
@@ -4721,3 +4775,6 @@ strings_list: .int 0
 input_buffer: .int 0
 input_index: .int 0
 input_limit: .int 0
+output_buffer: .int 0
+output_fd: .int 0
+output_count: .int 0

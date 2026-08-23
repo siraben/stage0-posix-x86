@@ -197,6 +197,9 @@ DEFINE xchg_eax,ebx 93
 	mov_eax, %4096                              # Size of the input buffer
 	call %malloc                                # Get it
 	mov_[DWORD],eax &input_buffer               # Preserve the pointer
+	mov_eax, %4096                              # Size of the output buffer
+	call %malloc                                # Get it
+	mov_[DWORD],eax &output_buffer              # Preserve the pointer
 	mov_eax, %0                                 # HEAD = NULL
 	call %read_all_tokens                       # Read all tokens
 	call %Reverse_List                          # Reverse order
@@ -222,6 +225,7 @@ DEFINE xchg_eax,ebx 93
 
 :Done
 	# program completed Successfully
+	call %fputc_flush                           # Write out anything still buffered
 	mov_ebx, %0                                 # All is well
 	mov_eax, %1                                 # put the exit syscall number in eax
 	int !0x80                                   # Call it a good day
@@ -763,21 +767,72 @@ DEFINE xchg_eax,ebx 93
 
 # fputc function
 # receives CHAR in EAX and load FILE* from [OUTPUT_FILE]
-# writes char and returns
+# Adds the char to a buffer that is written out with one write syscall
+# per full buffer (or when the output target changes) instead of doing
+# a write syscall for every single char
 :fputc
 	push_ebx                                    # Protect EBX
 	push_ecx                                    # Protect ECX
 	push_edx                                    # Protect EDX
-	push_eax                                    # We are writing eax
-	lea_ecx,[esp]                               # Get stack address
-	mov_ebx,[DWORD] &Output_file                # Write to target file
-	mov_eax, %4                                 # the syscall number for write
-	mov_edx, %1                                 # set the size of chars we want
-	int !0x80                                   # call the Kernel
-	pop_eax                                     # Restore stack
+	mov_ecx,[DWORD] &output_fd                  # fd our buffer is currently bound to
+	mov_ebx,[DWORD] &Output_file                # fd we are writing to now
+	cmp_ebx,ecx                                 # Writing somewhere else?
+	je %fputc_space                             # Nope
+
+	call %fputc_flush                           # Empty what was headed elsewhere
+	mov_ebx,[DWORD] &Output_file                # Rebind buffer to the new target
+	mov_[DWORD],ebx &output_fd
+
+:fputc_space
+	mov_ecx,[DWORD] &output_count               # Bytes waiting in the buffer
+	mov_ebx, %4096                              # Buffer capacity
+	cmp_ebx,ecx                                 # Room remaining?
+	jg %fputc_store                             # Yep
+
+	call %fputc_flush                           # Write out what we have
+
+:fputc_store
+	xchg_eax,ebx                                # Set the char aside in EBX
+	mov_eax,[DWORD] &output_buffer              # Where the buffer lives
+	mov_ecx,[DWORD] &output_count               # Next free slot
+	add_eax,ecx                                 # Address of the slot
+	xchg_eax,ebx                                # EBX = slot address, EAX = char
+	mov_[ebx],al                                # Store the byte
+	add_ecx, !1                                 # One more byte pending
+	mov_[DWORD],ecx &output_count               # Update count
+
 	pop_edx                                     # Restore EDX
 	pop_ecx                                     # Restore ECX
 	pop_ebx                                     # Restore EBX
+	ret
+
+
+# fputc_flush function
+# Writes any bytes waiting in the output buffer to its bound file
+# and marks the buffer empty
+# Preserves EAX, EBX, ECX and EDX
+:fputc_flush
+	push_eax                                    # Protect EAX
+	push_ebx                                    # Protect EBX
+	push_ecx                                    # Protect ECX
+	push_edx                                    # Protect EDX
+	mov_eax,[DWORD] &output_count               # How many bytes are pending
+	cmp_eax, !0                                 # Anything to do?
+	je %fputc_flush_done                        # Nope
+
+	mov_edx,eax                                 # Set the size of chars we want
+	mov_ecx,[DWORD] &output_buffer              # What we are writing
+	mov_ebx,[DWORD] &output_fd                  # Write to the bound target
+	mov_eax, %4                                 # the syscall number for write
+	int !0x80                                   # call the Kernel
+	mov_eax, %0                                 # Buffer is now empty
+	mov_[DWORD],eax &output_count
+
+:fputc_flush_done
+	pop_edx                                     # Restore EDX
+	pop_ecx                                     # Restore ECX
+	pop_ebx                                     # Restore EBX
+	pop_eax                                     # Restore EAX
 	ret
 
 
@@ -4788,6 +4843,7 @@ mov_eax,[eax]
 # And aborts hard
 # Does NOT return
 :Exit_Failure
+	call %fputc_flush                           # Write out anything still buffered
 	mov_ebx, %1                                 # All is wrong
 	mov_eax, %1                                 # put the exit syscall number in eax
 	int !0x80                                   # Call it a bad day
@@ -5076,6 +5132,12 @@ ARGUMENTS address: "
 :input_index
 	NULL
 :input_limit
+	NULL
+:output_buffer
+	NULL
+:output_fd
+	NULL
+:output_count
 	NULL
 
 :ELF_end
